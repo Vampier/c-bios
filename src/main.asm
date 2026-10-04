@@ -42,6 +42,8 @@ LASTSTAC:       equ     $E000
 SP_REGS:        equ     $E002
 
 COMPILE_FONT:   equ     YES
+KEY_REPEAT_DELAY: equ  60
+KEY_REPEAT_INTERVAL: equ 12
 
 ;---------------------
 ; Jump table
@@ -761,6 +763,7 @@ chkram_select:
                 ld      sp,hl           ; set $F300 to stack pointer
 
                 call    init_ram
+                call    inifnk
 
                 call    check_expanded
         IF VDP != TMS99X8
@@ -1116,6 +1119,20 @@ init_ram:
                 ld      de,OLDKEY+1
                 ld      bc,21
                 ldir
+                ld      hl,KEYCAND
+                ld      (hl),a
+                ld      de,KEYCAND+1
+                ld      bc,10
+                ldir
+                xor     a
+                ld      (KEYRPT_CHAR),a
+                ld      (KEYRPT_ROW),a
+                ld      (KEYRPT_MASK),a
+                ld      (KEYRPT_ACTIVE),a
+                ld      a,1
+                ld      (SCNCNT),a
+                ld      a,KEY_REPEAT_DELAY
+                ld      (REPCNT),a
 
 ; Initialize Key buffer
                 ld      a,$00
@@ -1237,6 +1254,8 @@ init_ram:
 
                 ld      a,$A0
                 ld      (RG1SAV),a
+                ld      a,1
+                ld      (CLIKSW),a
 
                 ld      a,(EXPTBL)
                 ld      (CGPNT),a
@@ -1583,18 +1602,15 @@ dcompr:
 ;       low     -       -       double  8
 ;       high    high    low     string  3
 ;       high    low     high    integer 2
-;       high    low     low     float   4
+;       high     low     low     float   4
 ; Registers: AF
-;NOTE: this implementation is still a stub!
 getypr:
-                push    hl
-                push    af
-                ld      hl,getypr_text
-                call    print_debug
-                pop     af
-                pop     hl
+                ld      a,(VALTYP)
+                cp      8               ; Double precision: C clear.
+                ret     z
+                cp      3               ; Integer sets S, string sets Z.
+                scf                     ; All non-double types set C.
                 ret
-getypr_text:    db      "GETYPR",0
 
 ;--------------------------------
 ; $0030 CALLF
@@ -1631,26 +1647,10 @@ initio:
                 jp      gicini
 
 ;--------------------------------
-; $003E INIFNK
-; Function : Initialises the contents of the function keys
-; Registers: All
-;NOTE: this implementation is still a stub!
-inifnk:
-                push    hl
-                push    af
-                ld      hl,inifnk_text
-                call    print_debug
-                pop     af
-                pop     hl
-                ret
-inifnk_text:    db      "INIFNK",0
-
-;--------------------------------
 ; $0099 STRTMS
 ; Function : Tests whether the PLAY statement is being executed as a background
 ;            task. If not, begins to execute the PLAY statement
 ; Registers: All
-;NOTE: this implementation is still a stub!
 strtms:
                 push    hl
                 push    af
@@ -1840,13 +1840,17 @@ cnvchr_normal_exit:
 ; Output:  CF set if CTRL-STOP is pressed
 ; Changes: AF
 breakx:
+                push    bc
+                ld      a,i
+                push    af              ; Save IFF2 in P/V.
+                di
                 in      a,(GIO_REGS)
                 and     $F0
                 or      $07
                 out     (GIO_REGS),a
                 in      a,(KBD_STAT)
                 and     $10             ; check STOP, also resets CF
-                ret     nz              ; some programs like to return with $10
+                jr      nz,breakx_pressed
 
                 in      a,(GIO_REGS)
                 and     $F0
@@ -1854,30 +1858,42 @@ breakx:
                 out     (GIO_REGS),a
                 in      a,(KBD_STAT)
                 and     $02             ; check CTRL, also resets CF
-                ret     nz
+                jr      nz,breakx_pressed
 
+                or      a               ; Clear carry when CTRL-STOP is up.
+                jr      breakx_restore
+breakx_pressed:
                 scf
+breakx_restore:
+                push    af              ; Preserve the result while restoring IFF.
+                pop     bc
+                pop     af
+                jp      po,breakx_iff_restored
+                ei
+breakx_iff_restored:
+                push    bc
+                pop     af
+                pop     bc
                 ret
 
 ;--------------------------------
 ; $00BA ISCNTC
-; Function: Test status of STOP or CTRL-STOP; if BASIC is in a ROM (see BASROM),
-;           then check for STOP or CTRL-STOP is not done. Otherways:
-;       INTLFLG: 0 => no action
-;       INTLFLG: 3 => CTRL-STOP pressed => break program, if "STOP-interrupts not on"??
-;       INTLFLG: 4 => STOP pressed => wait in ISCNTC till stop pressed again
-; Input: INTFLG, BASROM
+; Function: Tests status of SHIFT-STOP.
 ; Registers: AF
-; NOTE: this implementation is still a stub!
 iscntc:
-                push    hl
-                push    af
-                ld      hl,iscntc_text
-                call    print_debug
-                pop     af
-                pop     hl
+                ld      a,6             ; SHIFT is on keyboard row 6, bit 0.
+                call    snsmat
+                bit     0,a
+                jr      nz,iscntc_clear
+                ld      a,7             ; STOP is on keyboard row 7, bit 4.
+                call    snsmat
+                bit     4,a
+                jr      nz,iscntc_clear
+                scf
                 ret
-iscntc_text:    db      "ISCNTC",0
+iscntc_clear:
+                or      a               ; Clear carry when SHIFT-STOP is up.
+                ret
 
 ;--------------------------------
 ; $00BD CKCNTC
@@ -1889,18 +1905,28 @@ ckcntc:
 ; $00C0 BEEP
 ; Function : play a short beep, and reset sound system via GICINI
 ; Registers: All
-; NOTE: this implementation is still a stub!
 beep:
 ; Note: Called by CHPUT; if you need to change more regs than AF, HL, DE, BC
 ;       then update CHPUT.
-                push    hl
-                push    af
-                ld      hl,beep_text
-                call    print_debug
-                pop     af
-                pop     hl
+                ; 1.79 MHz PSG clock / (16 * 254) is approximately 440 Hz.
+                ld      e,$FE
+                ld      a,0
+                call    wrtpsg
+                ld      e,0
+                ld      a,1
+                call    wrtpsg
+                ld      e,15
+                ld      a,8
+                call    wrtpsg
+
+                ld      bc,$8000        ; Short CPU-timed tone.
+beep_wait:
+                dec     bc
+                ld      a,b
+                or      c
+                jr      nz,beep_wait
+                call    gicini          ; Silence and restore the PSG defaults.
                 ret
-beep_text:      db      "BEEP",0
 
 ;--------------------------------
 ; $00C6 POSIT
@@ -1912,57 +1938,6 @@ posit:
                 ; Note: this works because CSRX == CSRY + 1
                 ld      (CSRY),hl
                 ret
-
-;--------------------------------
-; $00C9 FNKSB
-; Tests whether the function key display is active (FNKFLG),
-; if so, displays them, otherwise erases them.
-; Input:   FNKFLG (#FBCE)
-; Changes: all
-; NOTE: This implementation is still a stub!
-fnksb:
-                push    hl
-                push    af
-                ld      hl,fnksb_text
-                call    print_debug
-                pop     af
-                pop     hl
-                ret
-fnksb_text:     db      "FNKSB",0
-
-;--------------------------------
-; $00CC ERAFNK
-; Erase function key display.
-; Changes: all
-; NOTE: This implementation is still a stub!
-; TODO: call H_ERAF
-erafnk:
-;               call    H_ERAF
-                push    hl
-                push    af
-                ld      hl,erafnk_text
-                call    print_debug
-                pop     af
-                pop     hl
-                ret
-erafnk_text:    db      "ERAFNK",0
-
-;--------------------------------
-; $00CF DSPFNK
-; Display function keys.
-; Changes: all
-; NOTE: This implementation is still a stub!
-; TODO: call H_DSPF
-dspfnk:
-;               call    H_DSPF
-                push    hl
-                push    af
-                ld      hl,dspfnk_text
-                call    print_debug
-                pop     af
-                pop     hl
-                ret
-dspfnk_text:    db      "DSPFNK",0
 
 ;--------------------------------
 ; $00D2 TOTEXT
@@ -2250,7 +2225,7 @@ format:
 ; Registers: AF
 ; TODO: call H_ISFL
 isflio:
-;                call    H_ISFL
+                call    H_ISFL
                 ld      a,(PTRFIL)
                 and     a               ; adjust flags
                 ret
@@ -2286,6 +2261,12 @@ gtstck:
                 and     a
                 ret
 joy_stc1:
+                cp      3
+                jr      c,joy_stc_valid
+                xor     a
+                pop     bc
+                ret
+joy_stc_valid:
 ;PSG reg 15h
 ;0J001111
 ;PSG reg 14h
@@ -2360,7 +2341,10 @@ joypos_kbd_tbl:
 ; Registers: All
 gttrig:
                 cp      5
-                jr      nc,gttrig_space ; if value of A is above 5,go space routine
+                jr      c,gttrig_valid
+                xor     a                       ; Invalid trigger IDs return released.
+                ret
+gttrig_valid:
                 or      a
                 jr      nz,joy_trig
 gttrig_space:
@@ -2413,12 +2397,20 @@ trig_off:
 
 ;--------------------------------
 ; $00DB GTPAD
-; Function : Returns current touch pad status
-; Input    : A  - Touchpad number to test
+; Function : Reads touch-pad data; MSX2 calls 8-23 are forwarded to NEWPAD.
+; Input    : A  - Function number
 ; Output   : A  - Value
 ; Registers: All
-; NOTE     : This implementation is still a stub!
 gtpad:
+        IF VDP != TMS99X8
+                cp      8
+                jr      c,gtpad_legacy
+                cp      24
+                jr      nc,gtpad_invalid
+                ld      ix,$01AD        ; NEWPAD in the MSX2 sub-ROM
+                jp      extrom
+gtpad_legacy:
+        ENDIF
                 push    hl
                 push    af
                 ld      hl,gtpad_text
@@ -2428,14 +2420,16 @@ gtpad:
                 xor     a  ; haywire
                 ret
 gtpad_text:     db      "GTPAD",0
+gtpad_invalid:
+                xor     a
+                ret
 
 ;--------------------------------
 ; $00DE GTPDL
-; Function : Returns currenct value of paddle
+; Function : Returns current value of paddle
 ; Input    : A  - Paddle number
 ; Output   : A  - Value
 ; Registers: All
-; NOTE     : This implementation is still a stub!
 gtpdl:
                 push    hl
                 push    af
@@ -2660,12 +2654,12 @@ keyint:
                 xor     a
                 ld      (CLIKFL),a
 
-                ; Scan the keyboard every three interrupts.
+                ; Scan the keyboard every VDP interrupt.
                 ld      a,(SCNCNT)
                 dec     a
                 ld      (SCNCNT),a
                 jr      nz,int_end
-                ld      a,3
+                ld      a,1
                 ld      (SCNCNT),a
 
                 ; TODO read joystick triggers and space for TRGFLG
@@ -2676,6 +2670,24 @@ keyint:
                 ld      (TRGFLG),a
 
                 call    key_in
+                ld      a,(KEYRPT_ACTIVE)
+                or      a
+                jr      z,int_end
+                ld      hl,NEWKEY
+                ld      a,(KEYRPT_ROW)
+                ld      e,a
+                ld      d,0
+                ld      hl,OLDKEY
+                add     hl,de
+                ld      a,(KEYRPT_MASK)
+                and     (hl)
+                jr      z,key_repeat_key_down
+                xor     a
+                ld      (KEYRPT_ACTIVE),a
+                ld      a,KEY_REPEAT_DELAY
+                ld      (REPCNT),a
+                jr      int_end
+key_repeat_key_down:
                 ; Check whether KEYBUF is empty and if so, decrement REPCNT to
                 ; see if auto-repeating should be started.  The user program
                 ; needs to continuously read characters to allow repetition.
@@ -2687,14 +2699,11 @@ keyint:
                 dec     a
                 ld      (REPCNT),a
                 jr      nz,int_end
-                ld      hl,OLDKEY
-                ld      bc,$0BFF
-clear_oldkey:
-                ld      (hl),c
-                inc     hl
-                djnz    clear_oldkey
-                call    key_in
-                ld      a,1
+                ld      a,(KEYRPT_CHAR)
+                call    key_click
+                ld      a,(KEYRPT_CHAR)
+                call    key_put_into_buf
+                ld      a,KEY_REPEAT_INTERVAL
                 ld      (REPCNT),a
 
 int_end:
@@ -2736,6 +2745,25 @@ key_in_lp:
                 inc     c
                 djnz    key_in_lp
 
+                ; Accept matrix transitions only after two identical scans.
+                ld      hl,NEWKEY
+                ld      de,KEYCAND
+                ld      b,11
+key_candidate_check:
+                ld      a,(de)
+                cp      (hl)
+                jr      nz,key_candidate_update
+                inc     de
+                inc     hl
+                djnz    key_candidate_check
+                jr      key_candidate_stable
+key_candidate_update:
+                ld      hl,NEWKEY
+                ld      de,KEYCAND
+                ld      bc,11
+                ldir
+                ret
+key_candidate_stable:
                 ld      ix,OLDKEY
                 ld      de,NEWKEY
                 ; Use plain or SHIFT version of rows 0-5?
@@ -2751,7 +2779,6 @@ scan_start:
 key_chk_lp:
                 ld      a,(de)
                 cp      (ix+0)
-                call    nz,key_set_delay
                 cpl
                 and     (ix+0)
                 ex      af,af'                          ; Update OLDKEY.
@@ -2763,7 +2790,7 @@ key_chk_lp:
                 ld      b,$08
 key_bit_lp:
                 rrca
-                jr      c,key_store
+                jp      c,key_store
 key_bit_next:
                 inc     hl
                 djnz    key_bit_lp
@@ -2783,13 +2810,14 @@ key_bit_next:
 key_set_delay:
                 ; Set the auto-repeat delay.
                 push    af
-                ld      a,5
+                ld      a,KEY_REPEAT_DELAY
                 ld      (REPCNT),a
                 pop     af
                 ret
 
 key_store:
                 push    af
+                call    key_click
                 ld      a,c
 
                 cp      $05
@@ -2861,17 +2889,40 @@ key_ascii:
                 ld      a,(hl)          ; get ASCII value
                 and     a               ; dead key?
                 jr      z,key_store_end2
+                ld      (KEYRPT_CHAR),a
+                ld      a,11
+                sub     c
+                ld      (KEYRPT_ROW),a
+                push    hl
+                push    de
+                ld      a,8
+                sub     b
+                ld      e,a
+                ld      d,0
+                ld      hl,key_repeat_mask_table
+                add     hl,de
+                ld      a,(hl)
+                ld      (KEYRPT_MASK),a
+                pop     de
+                pop     hl
+                ld      a,1
+                ld      (KEYRPT_ACTIVE),a
+                call    key_set_delay
                 ; Store ASCII value in key buffer.
                 ; Since a full buffer is indicated by PUTPNT == GETPNT - 1,
                 ; it is always safe to store a character, but if the buffer
                 ; is full, PUTPNT cannot be increased.
 
                 push    hl
+                ld      a,(KEYRPT_CHAR)
                 call    key_put_into_buf
                 pop     hl
 key_store_end2:
                 pop     af
                 jp      key_bit_next
+
+key_repeat_mask_table:
+                db      $01,$02,$04,$08,$10,$20,$40,$80
 
 ;--------------------------------
 key_put_into_buf:
@@ -3189,6 +3240,264 @@ vdp_bios:
                 db      $F5,$87,$00,$40
 
                 include "statements.asm"
+
+;--------------------------------
+; $003E INIFNK
+; Function : Initialises the contents of the function keys
+; Registers: All
+inifnk:
+                ld      hl,inifnk_defaults
+                ld      de,FNKSTR
+                ld      bc,$00A0
+                ldir
+
+                xor     a
+                ld      hl,FNKFLG
+                ld      (hl),a
+                ld      de,FNKFLG+1
+                ld      bc,9
+                ldir
+
+                ld      a,1
+                ld      (FNKSWI),a
+                ld      a,$FF
+                ld      (CNSDFG),a
+                ret
+
+inifnk_defaults:
+                db      "LIST",0
+                ds      11,0
+                db      "RUN",0
+                ds      12,0
+                db      "LOAD",$22,0
+                ds      10,0
+                db      "SAVE",$22,0
+                ds      10,0
+                db      "CONT",0
+                ds      11,0
+                ds      80,0
+
+;--------------------------------
+; $00C9 FNKSB
+; Tests whether the function key display is active (CNSDFG),
+; if so, displays them, otherwise erases them.
+; Input:   CNSDFG (#F3DE)
+; Changes: all
+fnksb:
+                ld      a,(CNSDFG)
+                or      a
+                jp      z,erafnk
+                jp      dspfnk
+
+;--------------------------------
+; $00CC ERAFNK
+; Erase function key display.
+; Changes: all
+erafnk:
+                call    H_ERAF
+                ld      a,(SCRMOD)
+                cp      2
+                ret     nc
+                ld      hl,(CSRY)
+                push    hl
+                call    fnk_clear_line
+                pop     hl
+                ld      (CSRY),hl
+                ret
+
+;--------------------------------
+; $00CF DSPFNK
+; Display function keys.
+; Changes: all
+dspfnk:
+                call    H_DSPF
+                ld      a,(SCRMOD)
+                cp      2
+                ret     nc
+                ld      hl,(CSRY)
+                push    hl
+                call    fnk_clear_line
+
+                ld      a,(CRTCNT)
+                ld      (CSRY),a
+                ld      a,1
+                ld      (CSRX),a
+                ld      a,(LINLEN)
+                ld      b,a
+                ld      a,(FNKSWI)
+                or      a
+                ld      c,6
+                jr      z,dspfnk_key
+                ld      c,1
+dspfnk_key:
+                ld      a,c
+                cp      10
+                jr      z,dspfnk_key_zero
+                add     a,'0'
+                jr      dspfnk_write_label
+dspfnk_key_zero:
+                ld      a,'0'
+dspfnk_write_label:
+                call    fnk_put_char
+                jr      z,dspfnk_done
+                ld      a,':'
+                call    fnk_put_char
+                jr      z,dspfnk_done
+
+                ld      a,c
+                dec     a
+                rlca
+                rlca
+                rlca
+                rlca
+                ld      e,a
+                ld      d,0
+                ld      hl,FNKSTR
+                add     hl,de
+dspfnk_text:
+                ld      a,(hl)
+                or      a
+                jr      z,dspfnk_next_key
+                call    fnk_put_char
+                jr      z,dspfnk_done
+                inc     hl
+                jr      dspfnk_text
+dspfnk_next_key:
+                ld      a,(FNKSWI)
+                or      a
+                jr      z,dspfnk_second_set
+                ld      a,c
+                cp      5
+                jr      z,dspfnk_done
+                jr      dspfnk_separator
+dspfnk_second_set:
+                ld      a,c
+                cp      10
+                jr      z,dspfnk_done
+dspfnk_separator:
+                ld      a,' '
+                call    fnk_put_char
+                jr      z,dspfnk_done
+                inc     c
+                jr      dspfnk_key
+dspfnk_done:
+                pop     hl
+                ld      (CSRY),hl
+                ret
+
+fnk_clear_line:
+                ld      a,(CRTCNT)
+                ld      (CSRY),a
+                ld      a,1
+                ld      (CSRX),a
+                ld      a,(LINLEN)
+                ld      b,a
+                or      a
+                ret     z
+fnk_clear_loop:
+                ld      a,' '
+                call    fnk_put_char
+                ld      a,b
+                or      a
+                jr      nz,fnk_clear_loop
+                ret
+
+; Write A at the current text cursor without allowing CHPUT to scroll the screen.
+; B counts the remaining columns and is decremented after each character.
+fnk_put_char:
+                push    hl
+                call    curs2hl
+                call    wrtvrm
+                pop     hl
+                ld      a,(CSRX)
+                inc     a
+                ld      (CSRX),a
+                dec     b
+                ld      a,b
+                or      a
+                ret
+
+key_click:
+                ld      a,(CLIKSW)
+                or      a
+                ret     z
+                ld      a,(CLIKFL)
+                or      a
+                ret     nz
+                ld      a,$0F
+                ld      (CLIKFL),a
+                push    af
+                push    bc
+                push    de
+                push    hl
+                push    ix
+                ld      a,4
+                call    rdpsg
+                push    af
+                ld      a,5
+                call    rdpsg
+                push    af
+                ld      a,7
+                call    rdpsg
+                push    af
+                ld      a,10
+                call    rdpsg
+                pop     af
+                ld      d,a
+                pop     af
+                ld      e,a
+
+                ld      a,4
+                out     (PSG_REGS),a
+                ld      a,$FE
+                out     (PSG_DATA),a
+                ld      a,5
+                out     (PSG_REGS),a
+                xor     a
+                out     (PSG_DATA),a
+                ld      a,7
+                out     (PSG_REGS),a
+                ld      a,e
+                and     $9F
+                or      $40
+                out     (PSG_DATA),a
+                ld      a,10
+                out     (PSG_REGS),a
+                ld      a,12
+                out     (PSG_DATA),a
+                ld      bc,$0100
+key_click_wait:
+                dec     bc
+                ld      a,b
+                or      c
+                jr      nz,key_click_wait
+
+                ld      a,10
+                out     (PSG_REGS),a
+                ld      a,d
+                out     (PSG_DATA),a
+                ld      a,7
+                out     (PSG_REGS),a
+                ld      a,e
+                out     (PSG_DATA),a
+                pop     af
+                ld      e,a
+                ld      a,5
+                out     (PSG_REGS),a
+                ld      a,e
+                out     (PSG_DATA),a
+                pop     af
+                ld      e,a
+                ld      a,4
+                out     (PSG_REGS),a
+                ld      a,e
+                out     (PSG_DATA),a
+                pop     ix
+                pop     hl
+                pop     de
+                pop     bc
+                pop     af
+                ret
 
 ; FM Music Macro is calling the routine(seems to display message).
 ; in : HL(an address of string with null termination)

@@ -45,6 +45,13 @@
 ; F38C-F399: interslot call
 ;CLPRIM:         equ     $F38C
 
+; C-BIOS keyboard repeat/debounce state (inter-slot helpers are disabled).
+KEYRPT_CHAR:    equ     $F380
+KEYRPT_ROW:     equ     $F381
+KEYRPT_MASK:    equ     $F382
+KEYRPT_ACTIVE:  equ     $F383
+KEYCAND:        equ     $F384
+
 ; F39A-F3AD: workarea for the DEF USR statement
 ; this area is initialized with the 10 times the value $475A, which gives
 ; the error 'Syntax Error'
@@ -214,13 +221,10 @@ QUEUES:         equ     $F3F3
 ; F3F5: CLOAD flag =0 when CLOAD =255 when CLOAD?
 FRCNEW:         equ     $F3F5
 
-; F3F6: VDP-interupt counter that counts from 3 to 0, when it reaches zero, the
-; keyboard matrix is scanned, and the counters is reset at 3
+; F3F6: VDP-interrupt counter used to schedule keyboard matrix scans
 SCNCNT:         equ     $F3F6
 
-; F3F7: key repeat counter. Runs from 13 to 0, and is changed when SCNCNT is changed
-; if the key remained the same. If it reaches 0, keyrepetition starts. If another key
-; is pressed the value is reset at 13.
+; F3F7: key repeat countdown, updated on keyboard scans
 REPCNT:         equ     $F3F7
 
 ; F3F8-F3F9: first free space in the inputbuffer of the keyboard
