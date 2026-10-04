@@ -1,9 +1,10 @@
 Building C-BIOS From Source
 ===========================
 
-First, get a Z80 assembler. Currently, only the following assembler can build
-C-BIOS without requiring modifications to the source code:
+First, get a Z80 assembler. The following assemblers can build C-BIOS without
+requiring modifications to the source code:
   * Pasmo 0.5.3 -  http://pasmo.speccy.org/
+  * SjASMPlus 1.24 or newer - https://github.com/z00m128/sjasmplus
 It is available for Windows, Linux and probably on other Unix-like systems as
 well.
 
@@ -11,6 +12,10 @@ Building with Pasmo:
 On Unix-like systems: Run "make". You should have GNU Make or something similar
 enough installed on your machine.
 On Windows: Run "make.bat" like this: "make pasmo".
+
+Building with SjASMPlus:
+On Unix-like systems, run "make Z80_ASSEMBLER=sjasmplus". This builds the
+complete ROM set, including the C-BASIC interpreter ROM.
 
 The produced ROM files are located in the directory "derived/bin", which will
 be automatically created. You can find symbol listings in "derived/lst", they

@@ -1,8 +1,10 @@
 C-BIOS 0.29
 ===========
 
-This software is a substitute BIOS which is can be used for running MSX
-emulators. It currently supports only execution of cartridge image ("ROMs").
+This software is a substitute BIOS which can be used for running MSX
+emulators. It supports cartridge images ("ROMs") and includes an optional
+minimal integer BASIC ROM. C-BASIC is not compatible with the full Microsoft
+MSX BASIC language; see cbasic.txt for its supported commands.
 Before you use it, you should read and accept the license (see below).
 
 On the C-BIOS web site, you can download newer versions, download the source
@@ -228,4 +230,3 @@ All users.
 Font edit tool:
  Gameboy Tile Designer version 2.2
  Copyright H. Mulder 1999
-

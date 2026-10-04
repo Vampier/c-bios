@@ -1,0 +1,157 @@
+C-BASIC
+=======
+
+C-BASIC is a compact integer BASIC ROM intended to run alongside C-BIOS. It
+implements a useful classic-BASIC subset, but is not a replacement for the
+Microsoft BASIC ROM and cannot run arbitrary MSX BASIC programs.
+
+Commands
+--------
+
+  PRINT expression[,expression][;expression]
+  PRINT "text" [;|,|"+" item]
+  LET A=expression       (or A=expression)
+  LET A$="text"          (or A$="text")
+  INPUT A                (numeric scalar)
+  INPUT A$               (string scalar)
+  IF expression relop expression THEN statement
+  GOTO line
+  GOSUB line
+  RETURN
+  FOR A=start TO end [STEP step]
+  NEXT [A]
+  SCREEN [mode][,[sprite size][,[key click]]]
+  POKE address,value
+  VPOKE address,value
+  DEF USR=address
+  USR(expression)
+  DATA item[,item...]
+  READ A[,A$...]
+  RESTORE [line]
+  LIST, RUN, NEW, CLS, END, REM, HELP
+  LOAD "A:PROGRAM.BAS"
+  SAVE "A:PROGRAM.BAS"
+  BLOAD "A:PROGRAM.BIN",R
+  BLOAD "A:SCREEN.BIN",S
+
+Relational operators are =, <>, <, >, <=, and >=. FOR loops can be nested up
+to eight levels. Numeric values are signed 16-bit integers; arithmetic wraps
+at 16 bits. Expressions support parentheses, unary minus, +, -, *, /, and
+MOD, along with the ABS, SGN, INT, SQR, and VAL functions. `MOD` returns the
+integer remainder after division and has the same precedence as `*` and `/`.
+Division truncates toward zero, and a negative left operand produces a
+negative remainder (for example, `-5 MOD 2` is `-1`). SQR returns the integer
+square root. `&H` hexadecimal and `&B` binary integer literals are supported,
+for example `&HFF` and `&B11111111` both evaluate to 255. VAL accepts a quoted
+string or A$-Z$.
+PEEK(address) and VPEEK(address) are also numeric functions: PEEK reads a
+byte from CPU memory at a 16-bit address (0 through 65535); negative address
+expressions wrap modulo 65536, so `PEEK(-1)` reads address 65535. VPEEK reads
+a byte from VRAM addresses 0 through 16383. LEN accepts a quoted string or
+string variable. String values are limited to 31 characters and stored in scalar
+variables A$-Z$. STR$ is supported as a PRINT item. String output items can
+be joined with +, for example:
+
+  PRINT "HELLO, "+A$
+  PRINT STR$(A)
+  PRINT VAL("123")+1
+  PRINT &HFF
+  PRINT &B11111111
+  PRINT PEEK(-1)
+  PRINT VPEEK(0)
+  POKE -1,170
+  VPOKE 0,170
+  DEF USR=49152
+  PRINT USR(123)
+
+`DEF USR=address` sets the machine-language entry point for `USR(expression)`.
+The numeric argument is passed as an MSX BASIC integer (`VALTYP=2`, value in
+`DAC+2` at `$F7F8`); the routine must return an integer in the same location
+and return with `RET`. `USR` cannot be called until it has been defined. This
+directly executes machine code in the current CPU address space; an invalid
+address or routine can crash BASIC or the machine.
+
+`DATA` supplies comma-separated integer or string fields to `READ`. String
+fields may be quoted or unquoted; quote strings to include commas. `READ`
+assigns the next fields to numeric or string scalar variables, continuing
+across DATA lines as needed. `RUN` starts at the first DATA item each time.
+`RESTORE` rewinds to the first DATA line; `RESTORE line` starts searching at
+that line number or the next higher line. Reading past the last field reports
+`?OUT OF DATA`.
+
+`POKE address,value` writes CPU memory at a 16-bit address (0 through 65535);
+negative address expressions wrap modulo 65536, so `POKE -1,170` writes
+address 65535.
+`VPOKE address,value` writes VRAM addresses 0 through 16383. Values must be
+in the range 0 through 255. These operations access hardware memory directly:
+writes to ROM have no effect, and writes to memory-mapped hardware can affect
+the machine immediately. Use them with care.
+
+Program lines are entered with a line number, for example:
+
+  10 FOR A=1 TO 3
+  20 PRINT "VALUE ";A
+  30 NEXT A
+  RUN
+
+DATA/READ example:
+
+  10 DATA 10,20,"HELLO"
+  20 READ A,B,C$
+  30 PRINT A;B;C$
+  40 RESTORE 10
+  50 READ A
+  RUN
+
+At the `Ok` prompt, Left and Right move within the line; typing inserts at
+the cursor, Backspace removes the character before it, and Delete removes the
+character under it. The editor uses a visible underline cursor. Up recalls the
+last non-empty command line so it can be edited and submitted again. Down is
+currently ignored. The keyboard is scanned every display interrupt and accepts
+key transitions only after two matching scans. Holding a key pauses for about
+one second before repeating, then repeats at roughly four to five characters
+per second.
+
+`SCREEN` supports the text modes used by this interpreter: mode 0 (40-column
+text) and mode 1 (32-column text). C-BIOS also provides an 80-column SCREEN 0
+mode on VDPs other than the TMS9918, but C-BASIC does not currently implement
+the `WIDTH` statement to select it. The optional sprite-size argument is 0
+(8x8) or 1 (16x16) in mode 1. The key-click argument is 0 to disable clicks
+or 1 to enable them; for example, `SCREEN ,,0` disables the keyboard click
+without changing the current mode. `SCREEN 0` and `SCREEN 1` switch text
+modes. Graphics modes are not accepted because this interpreter's console
+input and output use the BIOS text routines.
+
+Line numbers are kept in ascending order. Re-entering a line replaces it;
+entering a line number without a body deletes that line. Program text is held
+in page-2 RAM and is lost when the machine is reset or NEW is entered.
+Spaces between keywords and single-letter variables or numeric arguments are
+optional, so forms such as `FORI=0TO3` are accepted.
+
+Interoperability and limits
+---------------------------
+
+LOAD and SAVE use MSX-DOS CP/M-compatible FCB calls at address 0005h. They
+require MSX-DOS (or a compatible BDOS); C-BIOS/C-DISK alone does not provide
+DOS file services. Filenames must be quoted 8.3 names, optionally prefixed
+with a drive letter. LOAD and SAVE default the extension to BAS; BLOAD defaults
+it to BIN. BLOAD is accepted at the immediate prompt, not from a RUN program.
+
+BLOAD reads the standard seven-byte MSX binary header ($FE, start address,
+inclusive end address, execution address; all addresses are little-endian).
+`BLOAD "file",R` loads the data into RAM and calls the header execution
+address. `BLOAD "file",S` loads it into VRAM and does not execute it. The RAM
+destination must be in page 3 and must not overlap C-BASIC's work area
+($E000-$E7FF). The VRAM destination must fit in the first 16 KB ($0000-$3FFF).
+Files must contain the complete payload described by the header.
+
+Files are written as tokenized BASIC programs with the FF header, linked line
+records, supported MSX BASIC statement/function/operator/integer tokens, and
+the zero end marker. The importer accepts this supported token subset;
+ASCII-mode files and unsupported MSX BASIC tokens are rejected. Programs
+using only the implemented language subset can be exchanged with MSX BASIC,
+but this is not full tokenized-BASIC compatibility.
+
+Floating-point values, arrays, multiple-character variable names, general
+string expressions/functions, and most of the wider MSX BASIC statement and
+function set are not implemented.
